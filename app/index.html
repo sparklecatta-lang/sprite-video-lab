@@ -3,62 +3,421 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sprite Video Lab</title>
+  <title>素材处理工作台</title>
   <link rel="stylesheet" href="/app/styles.css">
 </head>
 <body>
   <div class="page-shell">
-    <header class="hero">
-      <div class="hero-main">
-        <p class="eyebrow">Sprite Video Lab</p>
-        <h1>&#x89C6;&#x9891;&#x8F6C; Sprite &#x5E27;&#x5DE5;&#x4F5C;&#x53F0;</h1>
-        <p class="hero-copy">&#x5BFC;&#x5165;&#x672C;&#x5730;&#x89C6;&#x9891;&#x6216;&#x5355;&#x5F20;&#x56FE;&#x7247;&#xFF0C;&#x5148;&#x5728;&#x8FD9;&#x4E2A;&#x5DE5;&#x4F5C;&#x53F0;&#x91CC;&#x9884;&#x89C8;&#x3001;&#x88C1;&#x533A;&#x3001;&#x62A0;&#x80CC;&#x666F;&#x3001;&#x7EDF;&#x4E00;&#x843D;&#x70B9;&#x4E0E;&#x5C3A;&#x5BF8;&#xFF0C;&#x6700;&#x540E;&#x5BFC;&#x51FA;&#x6210;&#x7A33;&#x5B9A;&#x7684;&#x900F;&#x660E; PNG Sprite &#x5E27;&#x3002;</p>
-        <div class="hero-pill-row">
-          <span class="hero-pill">Video + Image Input</span>
-          <span class="hero-pill">Green Screen Cleanup</span>
-          <span class="hero-pill">Pixel Sprite Workflow</span>
-        </div>
-      </div>
-      <div class="hero-status">
-        <span class="status-chip">&#x672C;&#x5730;&#x8FD0;&#x884C; / Design Workbench</span>
-        <div class="hero-stat-grid">
-          <div class="hero-stat">
-            <span>Input</span>
-            <strong>&#x89C6;&#x9891; + &#x5355;&#x56FE;</strong>
-          </div>
-          <div class="hero-stat">
-            <span>Preview</span>
-            <strong>&#x6240;&#x89C1;&#x5373;&#x6240;&#x5F97;</strong>
-          </div>
-          <div class="hero-stat">
-            <span>Cleanup</span>
-            <strong>&#x6290;&#x7EFF;&#x5E55; / &#x6536; Halo</strong>
-          </div>
-          <div class="hero-stat">
-            <span>Output</span>
-            <strong>Transparent PNG</strong>
-          </div>
-        </div>
-        <p class="hero-note">&#x9002;&#x5408;&#x628A; AI &#x89D2;&#x8272;&#x7EFF;&#x5E55;&#x89C6;&#x9891;&#x6216;&#x7D20;&#x6750;&#x56FE;&#xFF0C;&#x6574;&#x7406;&#x6210;&#x7A33;&#x5B9A;&#x53EF;&#x7528;&#x7684; Sprite &#x8D44;&#x4EA7;&#x3002;</p>
-      </div>
+    <header class="app-header">
+      <a class="brand-lockup" href="#/">
+        <span class="brand-mark">SVL</span>
+        <span>
+          <strong>素材处理工作台</strong>
+          <small>本地素材生成与序列帧处理</small>
+        </span>
+      </a>
+      <nav class="top-nav" aria-label="主导航">
+        <a href="#/">首页</a>
+        <a href="#/generate">生图资产库</a>
+        <a href="#/sprite">动作帧处理</a>
+      </nav>
     </header>
 
-    <main class="layout">
-      <section class="panel panel-wide">
+    <main id="homePage" class="home-page">
+      <section class="home-workbench">
+        <div class="home-summary">
+          <p class="eyebrow">工作台</p>
+          <h1>选择任务，继续处理本地素材</h1>
+          <p>把生图候选、提示词记录、视频抽帧和动作帧导出放在同一个本地工具里。资产文件留在本机，记录写入本地数据库。</p>
+          <div class="home-metrics">
+            <div>
+              <span>资产记录</span>
+              <strong>SQLite</strong>
+            </div>
+            <div>
+              <span>生图来源</span>
+              <strong>OpenAI / ToioTo</strong>
+            </div>
+            <div>
+              <span>文件位置</span>
+              <strong>本机工作区</strong>
+            </div>
+          </div>
+        </div>
+        <div class="home-action-grid">
+          <a class="home-action-card" href="#/generate">
+            <span>生成与归档</span>
+            <strong>生图资产库</strong>
+            <small>创建候选图，记录提示词、尺寸、来源、项目分类和本地路径。</small>
+            <b>打开资产库</b>
+          </a>
+          <a class="home-action-card" href="#/sprite">
+            <span>抽帧与导出</span>
+            <strong>动作帧处理</strong>
+            <small>导入视频、单图或序列帧，预览区间，处理透明背景并导出结果。</small>
+            <b>打开处理工具</b>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <main class="layout app-page" id="generatePage" hidden>
+      <nav class="page-switcher panel-wide" aria-label="页面切换">
+        <a href="#/">首页</a>
+        <a class="is-active" href="#/generate">生图资产库</a>
+        <a href="#/sprite">动作帧处理</a>
+      </nav>
+      <section class="panel panel-wide asset-lab-panel" id="assetLabPanel">
+        <div class="workbench-head">
+          <div>
+            <h2>生图资产库</h2>
+            <p>从提示词到候选图入库，统一记录项目、组件类型、来源、尺寸和文件路径。</p>
+          </div>
+          <div class="workbench-head-metrics">
+            <span>本地库</span>
+            <strong id="assetLibraryCount">0</strong>
+          </div>
+        </div>
+
+        <nav class="asset-lab-tabs" aria-label="生图资产库">
+          <button class="asset-lab-tab is-active" type="button" data-asset-lab-tab="generate">生图</button>
+          <button class="asset-lab-tab" type="button" data-asset-lab-tab="library">资产库</button>
+          <button class="asset-lab-tab" type="button" data-asset-lab-tab="projects">项目分类</button>
+          <button class="asset-lab-tab" type="button" data-asset-lab-tab="settings">来源与设置</button>
+        </nav>
+
+        <div id="assetLabGenerate" class="asset-lab-view">
+          <div class="generation-workbench">
+            <aside class="asset-control-rail">
+              <div class="rail-section parameter-panel">
+                <div class="section-title-row">
+                  <h3>任务参数</h3>
+                  <span>01</span>
+                </div>
+                <label class="field">
+                  <span>生成方式</span>
+                  <select id="generationModeInput">
+                    <option value="text">文本生图</option>
+                    <option value="reference">参考图生图</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>项目分类</span>
+                  <select id="assetProjectSelect"></select>
+                </label>
+                <label class="field">
+                  <span>生图来源</span>
+                  <select id="assetProviderSelect">
+                    <option value="openai">OpenAI</option>
+                    <option value="toioto" selected>ToioTo</option>
+                  </select>
+                  <small id="activeProviderHint">未检测到生图密钥时，可以先整理提示词和项目分类。</small>
+                </label>
+                <label class="field">
+                  <span>资产类型</span>
+                  <input id="assetTypeInput" type="text" value="icon">
+                </label>
+                <label class="field">
+                  <span>组件类型</span>
+                  <input id="componentTypeInput" type="text" placeholder="例如：item_icon / button / portrait">
+                </label>
+              </div>
+
+              <div id="referenceImageSection" class="rail-section parameter-panel" hidden>
+                <div class="section-title-row">
+                  <h3>参考图</h3>
+                  <span>02</span>
+                </div>
+                <label class="field">
+                  <span>参考图片</span>
+                  <input id="referenceImageInput" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,image/*" multiple>
+                  <small>上传一张或多张图片作为构图、主体或风格参考。</small>
+                </label>
+                <label class="field">
+                  <span>局部重绘 Mask</span>
+                  <input id="maskImageInput" type="file" accept=".png,image/png">
+                  <small>可选。是否支持局部重绘取决于当前生图来源。</small>
+                </label>
+                <div id="referenceImageSummary" class="reference-summary">尚未选择参考图。</div>
+              </div>
+
+              <div class="rail-section parameter-panel">
+                <div class="section-title-row">
+                  <h3>输出规格</h3>
+                  <span>03</span>
+                </div>
+                <div class="dimension-row">
+                  <label class="field">
+                    <span>宽度</span>
+                    <input id="assetWidthInput" type="number" value="1024" min="64">
+                  </label>
+                  <label class="field">
+                    <span>高度</span>
+                    <input id="assetHeightInput" type="number" value="1024" min="64">
+                  </label>
+                </div>
+                <div class="dimension-row">
+                  <label class="field">
+                    <span>质量</span>
+                    <select id="assetQualityInput">
+                      <option value="low">低 - 快速草图</option>
+                      <option value="medium">中 - 候选探索</option>
+                      <option value="high">高 - 精修候选</option>
+                      <option value="auto">自动</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>数量</span>
+                    <input id="assetCountInput" type="number" value="1" min="1" max="4">
+                  </label>
+                </div>
+                <label class="checkbox-row asset-lab-checkbox">
+                  <input id="transparentBackgroundInput" type="checkbox">
+                  <span>透明背景</span>
+                </label>
+              </div>
+            </aside>
+
+            <section class="prompt-console">
+              <div class="console-head command-head">
+                <div>
+                  <span>提示词</span>
+                  <strong>生成候选图</strong>
+                </div>
+                <button id="generateAssetButton" class="primary-button command-button" type="button">生成候选图</button>
+              </div>
+              <label class="field">
+                <span>风格描述</span>
+                <textarea id="styleContextInput" rows="6" placeholder="可选：粘贴风格说明，或描述本次要保持的视觉规则。"></textarea>
+              </label>
+              <label class="field">
+                <span>提示词</span>
+                <textarea id="assetPromptInput" rows="10" placeholder="描述要生成的素材主体、用途、构图、背景和输出要求。"></textarea>
+              </label>
+              <label class="field">
+                <span>反向约束</span>
+                <textarea id="negativePromptInput" rows="4" placeholder="可选：写下需要避免的内容，例如文字、水印、脏边、复杂背景。"></textarea>
+              </label>
+              <div class="generation-action-bar">
+                <div>
+                  <strong>生成后自动入库</strong>
+                  <p class="subtle">候选图会保存到本地工作区，同时记录提示词、来源、尺寸和图片路径。</p>
+                </div>
+                <button id="clearPromptButton" type="button">清空提示词</button>
+              </div>
+            </section>
+
+            <aside class="asset-status-rail">
+              <div class="rail-section generation-progress-panel status-panel">
+                <div class="section-title-row">
+                  <h3>生成进度</h3>
+                  <span id="generationProgressPercent">0%</span>
+                </div>
+                <div class="progress-track" aria-hidden="true">
+                  <div id="generationProgressFill" class="progress-fill"></div>
+                </div>
+                <div id="generationProgressText" class="progress-text">等待生成任务。</div>
+              </div>
+              <div class="rail-section generation-preview-panel status-panel">
+                <div class="section-title-row">
+                  <h3>本次预览</h3>
+                  <span>点击放大</span>
+                </div>
+                <div id="generationPreviewGrid" class="generation-preview-grid">
+                  <p class="subtle">生成完成后会在这里预览候选图。</p>
+                </div>
+              </div>
+              <div class="rail-section status-panel">
+                <div class="section-title-row">
+                  <h3>当前来源</h3>
+                  <span>状态</span>
+                </div>
+                <div id="activeProviderCard" class="active-provider-card"></div>
+              </div>
+              <div class="rail-section status-panel">
+                <div class="section-title-row">
+                  <h3>入库规则</h3>
+                  <span>本地</span>
+                </div>
+                <div class="intake-summary">
+                  <span>状态</span>
+                  <strong>候选图</strong>
+                  <span>位置</span>
+                  <strong>本地工作区</strong>
+                  <span>记录</span>
+                  <strong>提示词 + 参数 + 图片路径</strong>
+                </div>
+              </div>
+              <div class="rail-section compact-provider-list">
+                <h3>来源检测</h3>
+                <div id="providerStatus" class="provider-status-grid"></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <div id="assetLabLibrary" class="asset-lab-view" hidden>
+          <div class="library-layout">
+            <aside class="library-filters">
+              <div class="library-filter-head">
+                <strong>筛选资产</strong>
+                <span>按项目、状态和提示词缩小范围</span>
+              </div>
+              <label class="field">
+                <span>项目分类</span>
+                <select id="libraryProjectFilter"></select>
+              </label>
+              <label class="field">
+                <span>状态</span>
+                <select id="libraryStatusFilter">
+                  <option value="">全部</option>
+                  <option value="candidate">候选</option>
+                  <option value="selected">已选用</option>
+                  <option value="rejected">已废弃</option>
+                  <option value="archived">已归档</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>提示词</span>
+                <input id="libraryPromptFilter" type="search" placeholder="按提示词搜索">
+              </label>
+              <button id="libraryRefreshButton" type="button">刷新列表</button>
+            </aside>
+            <section class="library-results">
+              <div class="library-results-head">
+                <div>
+                  <span>本地候选资源</span>
+                  <strong>资产浏览</strong>
+                </div>
+                <p id="libraryResultSummary">点击卡片查看大图和完整提示词。</p>
+              </div>
+              <div id="assetGrid" class="asset-grid"></div>
+            </section>
+          </div>
+        </div>
+
+        <div id="assetLabProjects" class="asset-lab-view" hidden>
+          <div class="project-create-panel inline-form">
+            <label class="field grow">
+              <span>项目分类名称</span>
+              <input id="newProjectNameInput" type="text" placeholder="例如：通用 UI、角色参考、客户项目 A">
+            </label>
+            <label class="field grow">
+              <span>说明</span>
+              <input id="newProjectDescriptionInput" type="text" placeholder="可选，说明这个分类用于哪些素材">
+            </label>
+            <button id="createProjectButton" class="primary-button" type="button">创建分类</button>
+          </div>
+          <div id="projectList" class="asset-project-list"></div>
+          <section id="projectActivityPanel" class="project-activity-panel" hidden></section>
+        </div>
+
+        <div id="assetLabSettings" class="asset-lab-view" hidden>
+          <div class="settings-workbench">
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <span>本机资产库</span>
+                <h3>记录与文件都保存在本地</h3>
+              </div>
+              <p>候选图、缩略图和索引数据库都放在工具自己的工作区。这里只记录路径和状态，不会把素材写进当前代码项目。</p>
+              <div class="local-storage-grid">
+                <article class="local-storage-item is-wide">
+                  <span>工作区</span>
+                  <strong id="settingsWorkspacePath"></strong>
+                </article>
+                <article class="local-storage-item">
+                  <span>数据库</span>
+                  <strong>asset_lab.sqlite</strong>
+                </article>
+                <article class="local-storage-item">
+                  <span>图片文件</span>
+                  <strong>images / thumbnails</strong>
+                </article>
+              </div>
+              <div class="local-record-note">
+                <strong>存储规则</strong>
+                <span>数据库只保存元信息、提示词、尺寸、来源和本地图片路径。图片文件仍然留在本机目录。</span>
+              </div>
+              <section class="configured-provider-section" aria-labelledby="configuredProviderTitle">
+                <div class="settings-subhead">
+                  <h4 id="configuredProviderTitle">当前已配置的生图</h4>
+                  <span>仅显示状态</span>
+                </div>
+                <div id="settingsConfiguredProviders" class="configured-provider-grid"></div>
+              </section>
+            </section>
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <span>接口配置</span>
+                <h3>生图来源与密钥</h3>
+              </div>
+              <p>选择要配置的来源，粘贴 API key 后保存。页面只显示来源是否可用，不显示 API key 内容。</p>
+              <div class="provider-key-editor provider-single-editor">
+                <label class="field">
+                  <span>配置来源</span>
+                  <select id="settingsProviderSelect">
+                    <option value="toioto" selected>ToioTo</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </label>
+                <article class="provider-config-card">
+                  <div class="provider-config-head">
+                    <div>
+                      <span>当前来源</span>
+                      <strong id="settingsSelectedProviderName">ToioTo</strong>
+                    </div>
+                    <span id="settingsSelectedProviderStatus" class="provider-state-badge">未检测</span>
+                  </div>
+                  <dl class="provider-config-meta">
+                    <dt>环境变量</dt>
+                    <dd><code id="settingsSelectedProviderEnv">TOIOTO_API_KEY</code></dd>
+                    <dt>检测结果</dt>
+                    <dd id="settingsSelectedProviderMessage">等待检测。</dd>
+                    <dt>保存位置</dt>
+                    <dd>工具 .env 文件</dd>
+                  </dl>
+                </article>
+                <article id="settingsProviderHelp" class="provider-help-card">
+                  <div>
+                    <strong>获取 ToioTo API key</strong>
+                    <p>还没有 ToioTo key 时，可以打开注册链接获取。image2 生图：0.015 元/张。</p>
+                  </div>
+                  <a href="https://sub2api.toioto.org/register?aff=EYMPMLL9BLS5" target="_blank" rel="noopener">打开注册链接</a>
+                </article>
+                <label class="field">
+                  <span>API key</span>
+                  <input id="settingsProviderKeyInput" type="password" autocomplete="off" placeholder="填写后保存到工具 .env">
+                  <small>保存后立即刷新状态。为了安全，输入框不会回填已保存的密钥。</small>
+                </label>
+                <button id="saveProviderKeyButton" type="button">保存当前来源 key</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <main class="layout sprite-layout app-page" id="spritePage" hidden>
+      <nav class="page-switcher panel-wide" aria-label="页面切换">
+        <a href="#/">首页</a>
+        <a href="#/generate">生图资产库</a>
+        <a class="is-active" href="#/sprite">动作帧处理</a>
+      </nav>
+      <section class="panel panel-wide sprite-step-panel">
         <div class="panel-head">
           <div>
             <h2>1. &#x5BFC;&#x5165;&#x7D20;&#x6750;</h2>
-            <p>&#x652F;&#x6301;&#x89C6;&#x9891;&#x6216;&#x5355;&#x5F20;&#x56FE;&#x7247;&#x3002;&#x53EF;&#x4EE5;&#x7528;&#x7EDD;&#x5BF9;&#x8DEF;&#x5F84;&#x8F7D;&#x5165;&#xFF0C;&#x4E5F;&#x53EF;&#x4EE5;&#x76F4;&#x63A5;&#x62D6;&#x5165;&#x5230;&#x4E0B;&#x65B9;&#x5DE5;&#x4F5C;&#x533A;&#x3002;</p>
+            <p>导入视频或单张图片。文件已在本机时，优先使用绝对路径；也可以拖入下方区域。</p>
           </div>
         </div>
 
         <div class="import-stack">
           <div class="inline-form">
             <label class="field grow">
-              <span>&#x672C;&#x5730;&#x89C6;&#x9891;/&#x56FE;&#x7247;&#x8DEF;&#x5F84;</span>
-              <input id="pathInput" type="text" placeholder="&#x4F8B;&#x5982;&#xFF1A;D:\media\hero.mp4 &#x6216; hero.png">
+              <span>本地文件路径</span>
+              <input id="pathInput" type="text" placeholder="例如：D:\media\hero.mp4 或 D:\media\hero.png">
             </label>
-            <button id="importPathButton" class="primary-button" type="button">&#x5BFC;&#x5165;&#x8DEF;&#x5F84;</button>
+            <button id="importPathButton" class="primary-button" type="button">导入文件</button>
           </div>
 
           <div class="upload-form">
@@ -71,12 +430,12 @@
               aria-controls="uploadInput"
               aria-busy="false"
             >
-              <span class="upload-dropzone-title">&#x62D6;&#x52A8;&#x89C6;&#x9891;&#x6216;&#x5355;&#x5F20;&#x56FE;&#x7247;&#x5230;&#x8FD9;&#x91CC;</span>
-              <span class="upload-dropzone-hint">&#x6216;&#x70B9;&#x51FB;&#x9009;&#x62E9;&#x6587;&#x4EF6;&#x540E;&#x7ACB;&#x5373;&#x8F7D;&#x5165;</span>
+              <span class="upload-dropzone-title">拖入视频或图片</span>
+              <span class="upload-dropzone-hint">也可以点击选择文件，选择后会立即载入。</span>
               <span class="upload-dropzone-types">.mp4 / .mov / .mkv / .webm / .png / .jpg / .jpeg / .webp / .bmp</span>
             </label>
             <input id="uploadInput" type="file" accept=".mp4,.mov,.mkv,.webm,.png,.jpg,.jpeg,.webp,.bmp,video/*,image/*">
-            <p class="subtle">&#x5982;&#x679C;&#x6587;&#x4EF6;&#x5DF2;&#x7ECF;&#x5728;&#x672C;&#x673A;&#x78C1;&#x76D8;&#x4E0A;&#xFF0C;&#x4F18;&#x5148;&#x7528;&#x201C;&#x5BFC;&#x5165;&#x8DEF;&#x5F84;&#x201D;&#x3002;</p>
+            <p class="subtle">路径导入不会复制大文件，适合已经在本机磁盘上的素材。</p>
           </div>
         </div>
 
@@ -100,7 +459,7 @@
         </div>
       </section>
 
-      <section class="panel panel-wide" id="previewPanel" hidden>
+      <section class="panel panel-wide sprite-step-panel" id="previewPanel" hidden>
         <div class="panel-head">
           <div>
             <h2>2. &#x9884;&#x89C8;&#x4E0E;&#x622A;&#x53D6;&#x533A;&#x95F4;</h2>
@@ -111,7 +470,7 @@
         <div class="preview-grid">
           <div class="video-wrap">
             <video id="videoPreview" playsinline muted></video>
-            <img id="mediaPreviewImage" alt="source image preview" hidden>
+            <img id="mediaPreviewImage" alt="源图片预览" hidden>
             <div id="videoProgress" class="video-progress" aria-hidden="true">
               <div id="videoProgressFill" class="video-progress-fill"></div>
             </div>
@@ -129,8 +488,8 @@
                 <div class="time-number-shell">
                   <input id="startInput" type="text" inputmode="numeric" value="1">
                   <div class="time-step-buttons">
-                    <button id="startStepUpButton" class="time-step-button" type="button" aria-label="Start plus one frame">&#9650;</button>
-                    <button id="startStepDownButton" class="time-step-button" type="button" aria-label="Start minus one frame">&#9660;</button>
+                    <button id="startStepUpButton" class="time-step-button" type="button" aria-label="起点增加一帧">&#9650;</button>
+                    <button id="startStepDownButton" class="time-step-button" type="button" aria-label="起点减少一帧">&#9660;</button>
                   </div>
                 </div>
               </div>
@@ -143,8 +502,8 @@
                 <div class="time-number-shell">
                   <input id="endInput" type="text" inputmode="numeric" value="1">
                   <div class="time-step-buttons">
-                    <button id="endStepUpButton" class="time-step-button" type="button" aria-label="End plus one frame">&#9650;</button>
-                    <button id="endStepDownButton" class="time-step-button" type="button" aria-label="End minus one frame">&#9660;</button>
+                    <button id="endStepUpButton" class="time-step-button" type="button" aria-label="终点增加一帧">&#9650;</button>
+                    <button id="endStepDownButton" class="time-step-button" type="button" aria-label="终点减少一帧">&#9660;</button>
                   </div>
                 </div>
               </div>
@@ -165,7 +524,7 @@
         </div>
       </section>
 
-      <section class="panel panel-wide" id="processPanel" hidden>
+      <section class="panel panel-wide sprite-step-panel" id="processPanel" hidden>
         <div class="panel-head">
           <div>
             <h2>3. &#x62BD;&#x5E27;&#x4E0E;&#x62A0;&#x56FE;</h2>
@@ -439,7 +798,7 @@
         </div>
       </section>
 
-      <section class="panel panel-wide" id="resultPanel" hidden>
+      <section class="panel panel-wide sprite-step-panel" id="resultPanel" hidden>
         <div class="panel-head">
           <div>
             <h2>4. &#x68C0;&#x67E5;&#x5E27;&#x5E76;&#x5BFC;&#x51FA;</h2>
@@ -533,7 +892,7 @@
 
         <div class="export-bar">
           <label class="field compact-field">
-            <span>Sprite Sheet &#x5217;&#x6570;</span>
+            <span>&#x5E8F;&#x5217;&#x5E27;&#x5408;&#x56FE;&#x5217;&#x6570;</span>
             <input id="sheetColumnsInput" type="number" min="1" step="1" value="4">
           </label>
           <button id="exportButton" class="primary-button" type="button">&#x5BFC;&#x51FA;&#x9009;&#x4E2D;&#x5E27;</button>
@@ -544,7 +903,7 @@
     </main>
 
     <footer class="footer">
-      <div id="appStatus" class="status-message">&#x7B49;&#x5F85;&#x5BFC;&#x5165;&#x7D20;&#x6750;&#x3002;</div>
+      <div id="appStatus" class="status-message">请选择一个工作区开始。</div>
     </footer>
   </div>
 

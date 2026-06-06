@@ -1,10 +1,15 @@
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.pyo
 
 .venv/
 venv/
 env/
+
+.env
+.env.*
+!.env.example
 
 work/
 

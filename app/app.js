@@ -2,6 +2,15 @@ const state = {
   upload: null,
   job: null,
   exportResult: null,
+  assetLab: {
+    status: null,
+    projects: [],
+    assets: [],
+    latestAssets: [],
+    activeTab: "generate",
+    selectedProjectId: null,
+    activityTooltip: null,
+  },
   processPreview: null,
   selected: new Set(),
   segment: { start: 0, end: 0, startFrame: 1, endFrame: 1, confirmed: false },
@@ -56,10 +65,12 @@ document.addEventListener("DOMContentLoaded", () => {
   resetProcessPreview();
   updateSegmentConfirmationUI();
   showAnimationWorkbench();
-  setStatus("\u7B49\u5F85\u5BFC\u5165\u7D20\u6750\u3002");
+  setStatus("请选择一个工作区开始。");
   restoreSessionFromStorage();
   normalizeAiResolutionInput(false);
   startHotReloadPolling();
+  applyAppRoute();
+  window.addEventListener("hashchange", applyAppRoute);
   window.addEventListener("beforeunload", persistSession);
 });
 
@@ -179,12 +190,69 @@ function bindElements() {
     "exportButton",
     "exportResult",
     "appStatus",
+    "homePage",
+    "generatePage",
+    "spritePage",
+    "assetLabPanel",
+    "providerStatus",
+    "activeProviderCard",
+    "activeProviderHint",
+    "assetLibraryCount",
+    "generationModeInput",
+    "assetProjectSelect",
+    "assetProviderSelect",
+    "assetTypeInput",
+    "componentTypeInput",
+    "styleContextInput",
+    "assetPromptInput",
+    "negativePromptInput",
+    "assetWidthInput",
+    "assetHeightInput",
+    "assetQualityInput",
+    "assetCountInput",
+    "transparentBackgroundInput",
+    "referenceImageSection",
+    "referenceImageInput",
+    "maskImageInput",
+    "referenceImageSummary",
+    "generateAssetButton",
+    "clearPromptButton",
+    "generationProgressFill",
+    "generationProgressPercent",
+    "generationProgressText",
+    "generationPreviewGrid",
+    "assetLabGenerate",
+    "assetLabLibrary",
+    "assetLabProjects",
+    "assetLabSettings",
+    "libraryProjectFilter",
+    "libraryStatusFilter",
+    "libraryPromptFilter",
+    "libraryRefreshButton",
+    "assetGrid",
+    "libraryResultSummary",
+    "newProjectNameInput",
+    "newProjectDescriptionInput",
+    "createProjectButton",
+    "projectList",
+    "projectActivityPanel",
+    "settingsWorkspacePath",
+    "settingsProviderSelect",
+    "settingsConfiguredProviders",
+    "settingsSelectedProviderName",
+    "settingsSelectedProviderStatus",
+    "settingsSelectedProviderEnv",
+    "settingsSelectedProviderMessage",
+    "settingsProviderHelp",
+    "settingsProviderKeyInput",
+    "saveProviderKeyButton",
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
 }
 
 function bindEvents() {
+  bindAssetLabEvents();
   els.importPathButton.addEventListener("click", importFromPath);
   els.uploadInput.addEventListener("change", handleUploadInputChange);
   els.previewFrameButton.addEventListener("click", previewCurrentFrame);
@@ -360,6 +428,907 @@ function bindEvents() {
     const eventName = element instanceof HTMLInputElement && element.type === "checkbox" ? "change" : "input";
     element.addEventListener(eventName, persistSession);
   });
+}
+
+function bindAssetLabEvents() {
+  if (!els.assetLabPanel) {
+    return;
+  }
+  document.querySelectorAll("[data-asset-lab-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAssetLabTab(button.dataset.assetLabTab));
+  });
+  els.libraryRefreshButton?.addEventListener("click", () => {
+    loadAssetLibrary().catch((error) => setStatus(error.message || String(error), "error"));
+  });
+  els.generateAssetButton?.addEventListener("click", () => {
+    generateAssetCandidate().catch((error) => {
+      setGeneratingAsset(false);
+      updateGenerationProgress(0, error.message || "生成失败。", "error");
+      setStatus(error.message || String(error), "error");
+    });
+  });
+  els.clearPromptButton?.addEventListener("click", () => {
+    els.styleContextInput.value = "";
+    els.assetPromptInput.value = "";
+    els.negativePromptInput.value = "";
+    updateGenerationProgress(0, "等待生成任务。");
+    renderGenerationPreview([]);
+    setStatus("提示词已清空。");
+  });
+  els.settingsProviderSelect?.addEventListener("change", () => {
+    if (els.settingsProviderKeyInput) {
+      els.settingsProviderKeyInput.value = "";
+    }
+    renderAssetLabSettings();
+  });
+  els.saveProviderKeyButton?.addEventListener("click", () => {
+    const provider = currentSettingsProviderName();
+    saveProviderKey(provider, els.settingsProviderKeyInput, els.saveProviderKeyButton).catch((error) => {
+      setStatus(error.message || String(error), "error");
+    });
+  });
+  els.createProjectButton?.addEventListener("click", () => {
+    createAssetLabProject().catch((error) => setStatus(error.message || String(error), "error"));
+  });
+  [els.libraryProjectFilter, els.libraryStatusFilter].forEach((element) => {
+    element?.addEventListener("change", () => {
+      loadAssetLibrary().catch((error) => setStatus(error.message || String(error), "error"));
+    });
+  });
+  els.assetProviderSelect?.addEventListener("change", renderActiveProviderCard);
+  els.generationModeInput?.addEventListener("change", updateGenerationModeUi);
+  els.referenceImageInput?.addEventListener("change", updateReferenceImageSummary);
+  els.maskImageInput?.addEventListener("change", updateReferenceImageSummary);
+  els.libraryPromptFilter?.addEventListener("input", debounceAssetLibrarySearch);
+  initAssetLabUi();
+  updateGenerationModeUi();
+}
+
+function applyAppRoute() {
+  const route = window.location.hash || "#/";
+  const isGenerate = route === "#/generate";
+  const isSprite = route === "#/sprite";
+  if (els.homePage) {
+    els.homePage.hidden = isGenerate || isSprite;
+  }
+  if (els.generatePage) {
+    els.generatePage.hidden = !isGenerate;
+  }
+  if (els.spritePage) {
+    els.spritePage.hidden = !isSprite;
+  }
+  document.querySelectorAll(".top-nav a").forEach((link) => {
+    const href = link.getAttribute("href") || "#/";
+    const isActive =
+      (!isGenerate && !isSprite && href === "#/") ||
+      (isGenerate && href === "#/generate") ||
+      (isSprite && href === "#/sprite");
+    link.classList.toggle("is-active", isActive);
+    if (isActive) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  });
+  if (!isGenerate && !isSprite) {
+    document.title = "素材处理工作台";
+    setStatus("选择一个任务开始。");
+  } else if (isGenerate) {
+    document.title = "生图资产库 - 素材处理工作台";
+    setStatus("生图资产库已就绪。先确认来源，再生成候选图。");
+  } else {
+    document.title = "动作帧处理 - 素材处理工作台";
+    setStatus(state.upload ? `已载入 ${state.upload.display_name}。` : "导入视频、图片或序列帧后开始处理。");
+  }
+}
+
+let assetLibrarySearchTimer = null;
+
+function debounceAssetLibrarySearch() {
+  window.clearTimeout(assetLibrarySearchTimer);
+  assetLibrarySearchTimer = window.setTimeout(() => {
+    loadAssetLibrary().catch((error) => setStatus(error.message || String(error), "error"));
+  }, 250);
+}
+
+function setAssetLabTab(tabName) {
+  state.assetLab.activeTab = tabName || "generate";
+  document.querySelectorAll("[data-asset-lab-tab]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.assetLabTab === state.assetLab.activeTab);
+  });
+  [
+    ["generate", els.assetLabGenerate],
+    ["library", els.assetLabLibrary],
+    ["projects", els.assetLabProjects],
+    ["settings", els.assetLabSettings],
+  ].forEach(([name, panel]) => {
+    if (panel) {
+      panel.hidden = name !== state.assetLab.activeTab;
+    }
+  });
+  if (state.assetLab.activeTab === "library") {
+    loadAssetLibrary().catch((error) => setStatus(error.message || String(error), "error"));
+  }
+}
+
+async function initAssetLabUi() {
+  try {
+    await loadAssetLabStatus();
+    await loadAssetLabProjects();
+    await loadAssetLibrary();
+  } catch (error) {
+    setStatus(error.message || String(error), "error");
+  }
+}
+
+async function assetLabFetch(path, options = {}) {
+  return apiJson(`/api/asset-lab${path}`, options);
+}
+
+async function loadAssetLabStatus() {
+  state.assetLab.status = await assetLabFetch("/status");
+  renderProviderStatus();
+  renderAssetLabSettings();
+}
+
+async function loadAssetLabProjects() {
+  const payload = await assetLabFetch("/projects");
+  state.assetLab.projects = payload.projects || [];
+  renderProjectOptions();
+  renderProjectList();
+}
+
+function renderProviderStatus() {
+  if (!els.providerStatus || !state.assetLab.status) {
+    return;
+  }
+  els.providerStatus.innerHTML = Object.entries(state.assetLab.status.providers)
+    .map(([name, info]) => `
+      <div class="provider-status ${info.configured ? "is-ready" : "is-missing"}">
+        <strong>${escapeHtml(providerMeta(name).label)}</strong>
+        <span>${escapeHtml(info.message)}</span>
+      </div>
+    `)
+    .join("");
+  renderActiveProviderCard();
+}
+
+function renderActiveProviderCard() {
+  if (!els.activeProviderCard || !state.assetLab.status) {
+    return;
+  }
+  const providerName = els.assetProviderSelect?.value || "openai";
+  const provider = state.assetLab.status.providers[providerName];
+  if (!provider) {
+    els.activeProviderCard.innerHTML = '<p class="subtle">请选择一个生图来源。</p>';
+    return;
+  }
+  const label = providerMeta(providerName).label;
+  els.activeProviderCard.innerHTML = `
+    <div class="provider-focus ${provider.configured ? "is-ready" : "is-missing"}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${provider.configured ? "已配置" : "未配置"}</strong>
+      <small>${escapeHtml(provider.message)}</small>
+    </div>
+  `;
+  if (els.activeProviderHint) {
+    els.activeProviderHint.textContent = provider.configured
+      ? `${label} 已连接，可以提交生成任务。`
+      : `先到“来源与设置”保存 ${label} API key。`;
+  }
+}
+
+function providerMeta(providerName) {
+  const map = {
+    openai: { label: "OpenAI", env: "OPENAI_API_KEY" },
+    toioto: { label: "ToioTo", env: "TOIOTO_API_KEY" },
+  };
+  return map[providerName] || { label: providerName || "未知来源", env: "" };
+}
+
+function currentSettingsProviderName() {
+  const selectedProvider = els.settingsProviderSelect?.value || "toioto";
+  if (state.assetLab.status?.providers?.[selectedProvider]) {
+    return selectedProvider;
+  }
+  return "toioto";
+}
+
+function setGeneratingAsset(isGenerating) {
+  if (!els.generateAssetButton) {
+    return;
+  }
+  els.generateAssetButton.disabled = isGenerating;
+  els.generateAssetButton.textContent = isGenerating ? "正在生成" : "生成候选图";
+}
+
+function updateGenerationProgress(percent, text, tone = "") {
+  if (els.generationProgressFill) {
+    els.generationProgressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  }
+  if (els.generationProgressPercent) {
+    els.generationProgressPercent.textContent = `${Math.round(Math.max(0, Math.min(100, percent)))}%`;
+  }
+  if (els.generationProgressText) {
+    els.generationProgressText.textContent = text;
+    els.generationProgressText.className = `progress-text${tone ? ` ${tone}` : ""}`;
+  }
+}
+
+function assetFullImageUrl(asset) {
+  return asset?.relative_file_path ? `/asset-lab-files/${asset.relative_file_path}` : assetImageUrl(asset);
+}
+
+function renderGenerationPreview(assets = []) {
+  if (!els.generationPreviewGrid) {
+    return;
+  }
+  if (!assets.length) {
+    els.generationPreviewGrid.innerHTML = '<p class="empty-copy">还没有本次生成结果。提交任务后，候选图会显示在这里。</p>';
+    return;
+  }
+  els.generationPreviewGrid.innerHTML = assets.map((asset) => `
+    <div class="generation-preview-item">
+      <button class="generation-preview-thumb" type="button" data-preview-asset-id="${asset.id}" aria-label="查看 ${asset.width} x ${asset.height} 生成图">
+        <img src="${assetImageUrl(asset)}" alt="">
+        <span>${asset.width} x ${asset.height}</span>
+      </button>
+      <button class="asset-send-sprite-button" type="button" data-send-sprite-id="${asset.id}">去处理</button>
+    </div>
+  `).join("");
+  els.generationPreviewGrid.querySelectorAll("[data-preview-asset-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const asset = assets.find((item) => String(item.id) === button.dataset.previewAssetId);
+      if (asset) openAssetLightbox(asset);
+    });
+  });
+  bindSendAssetToSpriteButtons(els.generationPreviewGrid, assets);
+}
+
+function bindSendAssetToSpriteButtons(root, assets) {
+  root.querySelectorAll("[data-send-sprite-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const asset = assets.find((item) => String(item.id) === button.dataset.sendSpriteId);
+      if (!asset) {
+        setStatus("没有找到这张资产，请刷新资产库后再试。", "error");
+        return;
+      }
+      sendAssetToSprite(asset, button);
+    });
+    button.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+    });
+  });
+}
+
+async function sendAssetToSprite(asset, button) {
+  const previousLabel = button.textContent;
+  button.textContent = "载入中";
+  await withBusy(button, async () => {
+    setStatus("正在把资产载入到动作帧处理...");
+    const data = await assetLabFetch(`/assets/${asset.id}/send-to-sprite`, { method: "POST" });
+    applyUpload(data.upload);
+    window.location.hash = "#/sprite";
+    applyAppRoute();
+    setStatus(`已载入 ${data.upload.display_name || "选中资产"}，可以直接处理。`, "success");
+  });
+  button.textContent = previousLabel;
+}
+
+function updateGenerationModeUi() {
+  const mode = els.generationModeInput?.value || "text";
+  if (els.referenceImageSection) {
+    els.referenceImageSection.hidden = mode !== "reference";
+  }
+  updateReferenceImageSummary();
+}
+
+function updateReferenceImageSummary() {
+  if (!els.referenceImageSummary) {
+    return;
+  }
+  const count = els.referenceImageInput?.files?.length || 0;
+  const hasMask = Boolean(els.maskImageInput?.files?.length);
+  if (!count) {
+    els.referenceImageSummary.textContent = "未选择参考图。";
+    return;
+  }
+  els.referenceImageSummary.textContent = hasMask
+    ? `已选择 ${count} 张参考图，并附带 mask。`
+    : `已选择 ${count} 张参考图。`;
+}
+
+async function generateAssetCandidate() {
+  const providerName = els.assetProviderSelect?.value || "openai";
+  const provider = state.assetLab.status?.providers?.[providerName];
+  if (!provider?.configured) {
+    setStatus(provider?.message || "当前生图来源未配置。", "error");
+    return;
+  }
+  const prompt = (els.assetPromptInput?.value || "").trim();
+  if (!prompt) {
+    setStatus("请先填写提示词。", "error");
+    els.assetPromptInput?.focus();
+    return;
+  }
+  const mode = els.generationModeInput?.value || "text";
+  const referenceFiles = Array.from(els.referenceImageInput?.files || []);
+  if (mode === "reference" && !referenceFiles.length) {
+    setStatus("参考图生图需要先选择至少一张参考图片。", "error");
+    els.referenceImageInput?.focus();
+    return;
+  }
+
+  setGeneratingAsset(true);
+  state.assetLab.latestAssets = [];
+  renderGenerationPreview([]);
+  updateGenerationProgress(12, "正在整理提示词和生成参数。");
+  setStatus("正在提交生成任务。完成后会保存到候选库。");
+  const fields = {
+    provider: providerName,
+    project_id: els.assetProjectSelect?.value || "",
+    asset_type: (els.assetTypeInput?.value || "asset").trim(),
+    component_type: (els.componentTypeInput?.value || "").trim(),
+    style_text: (els.styleContextInput?.value || "").trim(),
+    prompt,
+    negative_prompt: (els.negativePromptInput?.value || "").trim(),
+    width: Number(els.assetWidthInput?.value || 1024),
+    height: Number(els.assetHeightInput?.value || 1024),
+    quality: els.assetQualityInput?.value || "low",
+    count: Number(els.assetCountInput?.value || 1),
+    transparent_background: Boolean(els.transparentBackgroundInput?.checked),
+  };
+  let body = fields;
+  if (mode === "reference") {
+    const form = new FormData();
+    Object.entries(fields).forEach(([key, value]) => form.append(key, String(value)));
+    referenceFiles.forEach((file) => form.append("reference_images", file));
+    const maskFile = els.maskImageInput?.files?.[0];
+    if (maskFile) {
+      form.append("mask_image", maskFile);
+    }
+    body = form;
+  }
+  updateGenerationProgress(35, "已提交到生图来源，通常需要几十秒。");
+  const payload = await assetLabFetch("/generate", {
+    method: "POST",
+    body,
+  });
+  updateGenerationProgress(82, "已收到图片，正在写入本地资产库。");
+  state.assetLab.assets = payload.assets || [];
+  state.assetLab.latestAssets = payload.assets || [];
+  await loadAssetLibrary();
+  await loadAssetLabProjects();
+  renderGenerationPreview(state.assetLab.latestAssets);
+  updateGenerationProgress(100, `完成，已入库 ${payload.assets?.length || 0} 张候选图。`, "success");
+  setStatus(`已入库 ${payload.assets?.length || 0} 张候选图。`, "success");
+  setGeneratingAsset(false);
+}
+
+async function saveProviderKey(provider, input, button) {
+  const apiKey = (input?.value || "").trim();
+  if (!apiKey) {
+    setStatus("请先填写 API key。", "error");
+    input?.focus();
+    return;
+  }
+  await withBusy(button, async () => {
+    await assetLabFetch("/provider-key", {
+      method: "POST",
+      body: { provider, api_key: apiKey },
+    });
+    input.value = "";
+    await loadAssetLabStatus();
+    setStatus(`${providerMeta(provider).label} API key 已保存。下次启动会自动读取工具 .env。`, "success");
+  });
+}
+
+function renderProjectOptions() {
+  const options = ['<option value="">收件箱 / 未分类</option>'];
+  for (const project of state.assetLab.projects) {
+    options.push(`<option value="${project.id}">${escapeHtml(project.name)}</option>`);
+  }
+  [els.assetProjectSelect, els.libraryProjectFilter].forEach((select) => {
+    if (select) {
+      const current = select.value;
+      select.innerHTML = options.join("");
+      select.value = current;
+    }
+  });
+}
+
+function renderProjectList() {
+  if (!els.projectList) {
+    return;
+  }
+  if (!state.assetLab.projects.length) {
+    els.projectList.innerHTML = '<p class="empty-copy">还没有分类。创建分类后，生成和筛选资产时可以按项目归档。</p>';
+    renderProjectActivityPanel(null);
+    return;
+  }
+  if (!state.assetLab.projects.some((project) => String(project.id) === String(state.assetLab.selectedProjectId))) {
+    state.assetLab.selectedProjectId = null;
+  }
+  els.projectList.innerHTML = state.assetLab.projects
+    .map((project) => `
+      <button class="asset-project-card ${String(project.id) === String(state.assetLab.selectedProjectId) ? "is-selected" : ""}" type="button" data-project-id="${project.id}">
+        <span class="project-card-kicker">项目分类</span>
+        <strong>${escapeHtml(project.name)}</strong>
+        <p>${escapeHtml(project.description || "没有项目说明。")}</p>
+        <dl>
+          <div>
+            <dt>资产</dt>
+            <dd>${Number(project.asset_count || 0)}</dd>
+          </div>
+          <div>
+            <dt>创建</dt>
+            <dd>${escapeHtml(formatDateLabel(project.created_at))}</dd>
+          </div>
+          <div>
+            <dt>最近生成</dt>
+            <dd>${escapeHtml(formatDateLabel(project.latest_asset_at) || "暂无")}</dd>
+          </div>
+        </dl>
+      </button>
+    `)
+    .join("");
+  els.projectList.querySelectorAll("[data-project-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.assetLab.selectedProjectId = button.dataset.projectId;
+      renderProjectList();
+      const project = state.assetLab.projects.find((item) => String(item.id) === String(state.assetLab.selectedProjectId));
+      renderProjectActivityPanel(project);
+    });
+  });
+  if (state.assetLab.selectedProjectId) {
+    const project = state.assetLab.projects.find((item) => String(item.id) === String(state.assetLab.selectedProjectId));
+    renderProjectActivityPanel(project);
+  } else {
+    renderProjectActivityPanel(null);
+  }
+}
+
+function formatDateLabel(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 10);
+  }
+  return date.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
+function activityLevel(count) {
+  if (count >= 5) return 3;
+  if (count >= 2) return 2;
+  if (count >= 1) return 1;
+  return 0;
+}
+
+const PROJECT_ACTIVITY_WEEKS = 44;
+
+function buildActivityDays(project, weekCount = PROJECT_ACTIVITY_WEEKS) {
+  const activityMap = new Map((project?.activity || []).map((item) => [item.date, item]));
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const start = new Date(todayUtc);
+  start.setUTCDate(start.getUTCDate() - (weekCount * 7 - 1));
+  const days = [];
+  for (let index = 0; index < weekCount * 7; index += 1) {
+    const date = new Date(start);
+    date.setUTCDate(start.getUTCDate() + index);
+    const iso = date.toISOString().slice(0, 10);
+    const activity = activityMap.get(iso) || {};
+    const count = Number(activity.count || 0);
+    days.push({
+      date: iso,
+      count,
+      firstAssetAt: activity.first_asset_at || "",
+      latestAssetAt: activity.latest_asset_at || "",
+      level: activityLevel(count),
+    });
+  }
+  return days;
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) {
+    return "无";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value).replace("T", " ").slice(0, 19);
+  }
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function ensureActivityTooltip() {
+  if (state.assetLab.activityTooltip) {
+    return state.assetLab.activityTooltip;
+  }
+  const tooltip = document.createElement("div");
+  tooltip.className = "activity-tooltip";
+  tooltip.hidden = true;
+  document.body.appendChild(tooltip);
+  state.assetLab.activityTooltip = tooltip;
+  return tooltip;
+}
+
+function hideActivityTooltip() {
+  const tooltip = state.assetLab.activityTooltip;
+  if (tooltip) {
+    tooltip.hidden = true;
+  }
+}
+
+function showActivityTooltip(cell) {
+  const tooltip = ensureActivityTooltip();
+  const count = Number(cell.dataset.count || 0);
+  tooltip.innerHTML = `
+    <strong>${escapeHtml(cell.dataset.date || "")}</strong>
+    <span>当天新增：${count} 个资产</span>
+    <span>首次生成：${escapeHtml(cell.dataset.firstAt || "无")}</span>
+    <span>最近生成：${escapeHtml(cell.dataset.latestAt || "无")}</span>
+  `;
+  const rect = cell.getBoundingClientRect();
+  tooltip.hidden = false;
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const left = Math.min(
+    window.innerWidth - tooltipRect.width - 12,
+    Math.max(12, rect.left + rect.width / 2 - tooltipRect.width / 2)
+  );
+  const top = rect.top > tooltipRect.height + 14
+    ? rect.top - tooltipRect.height - 10
+    : rect.bottom + 10;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${Math.max(12, top)}px`;
+}
+
+function bindActivityTooltipEvents(container) {
+  container.querySelectorAll(".activity-cell").forEach((cell) => {
+    cell.addEventListener("mouseenter", () => showActivityTooltip(cell));
+    cell.addEventListener("mousemove", () => showActivityTooltip(cell));
+    cell.addEventListener("mouseleave", hideActivityTooltip);
+    cell.addEventListener("focus", () => showActivityTooltip(cell));
+    cell.addEventListener("blur", hideActivityTooltip);
+  });
+}
+
+function renderProjectActivityPanel(project) {
+  if (!els.projectActivityPanel) {
+    return;
+  }
+  if (!project) {
+    els.projectActivityPanel.hidden = false;
+    els.projectActivityPanel.innerHTML = `
+      <div class="project-activity-empty">
+        <strong>选择一个项目查看生成记录</strong>
+        <span>点击上方项目卡片后，这里会显示最近 ${PROJECT_ACTIVITY_WEEKS} 周的资产新增情况和日期范围。</span>
+      </div>
+    `;
+    return;
+  }
+  const days = buildActivityDays(project, PROJECT_ACTIVITY_WEEKS);
+  const total = days.reduce((sum, day) => sum + day.count, 0);
+  const activeDays = days.filter((day) => day.count > 0).length;
+  const maxDaily = days.reduce((max, day) => Math.max(max, day.count), 0);
+  const startLabel = formatDateLabel(days[0]?.date);
+  const endLabel = formatDateLabel(days[days.length - 1]?.date);
+  const latestActiveDay = days.slice().reverse().find((day) => day.count > 0);
+  const latestActiveLabel = latestActiveDay ? formatDateLabel(latestActiveDay.date) : "暂无记录";
+  els.projectActivityPanel.hidden = false;
+  els.projectActivityPanel.innerHTML = `
+    <div class="project-activity-head">
+      <div class="project-activity-title">
+        <span>项目活动总览</span>
+        <strong>${escapeHtml(project.name)}</strong>
+        <p>日期范围：<b>${escapeHtml(startLabel)}</b><i></i><b>${escapeHtml(endLabel)}</b></p>
+      </div>
+      <dl class="project-activity-stats">
+        <div><dt>最近 ${PROJECT_ACTIVITY_WEEKS} 周新增</dt><dd>${total}</dd></div>
+        <div><dt>活跃天数</dt><dd>${activeDays}</dd></div>
+        <div><dt>单日峰值</dt><dd>${maxDaily}</dd></div>
+      </dl>
+    </div>
+    <div class="project-activity-overview" aria-label="日期总览">
+      <div>
+        <span>日期总览</span>
+        <strong>${escapeHtml(startLabel)} 至 ${escapeHtml(endLabel)}</strong>
+      </div>
+      <div>
+        <span>最近有新增</span>
+        <strong>${escapeHtml(latestActiveLabel)}</strong>
+      </div>
+    </div>
+    <div class="project-activity-map-shell">
+      <div class="project-activity-axis">
+        <span>${PROJECT_ACTIVITY_WEEKS} 周视图</span>
+        <span>每个小格代表 1 天</span>
+      </div>
+      <div class="project-activity-heatmap" role="img" aria-label="${escapeHtml(project.name)} 最近 ${PROJECT_ACTIVITY_WEEKS} 周资产生成记录">
+        ${days.map((day) => `
+          <button
+            class="activity-cell level-${day.level}"
+            type="button"
+            aria-label="${day.date}，新增 ${day.count} 个资产"
+            data-date="${day.date}"
+            data-count="${day.count}"
+            data-first-at="${escapeHtml(formatDateTimeLabel(day.firstAssetAt))}"
+            data-latest-at="${escapeHtml(formatDateTimeLabel(day.latestAssetAt))}"
+          ></button>
+        `).join("")}
+      </div>
+    </div>
+    <div class="project-activity-legend">
+      <span>少</span>
+      <i class="level-0"></i>
+      <i class="level-1"></i>
+      <i class="level-2"></i>
+      <i class="level-3"></i>
+      <span>多，5 次以上颜色最深</span>
+    </div>
+  `;
+  bindActivityTooltipEvents(els.projectActivityPanel);
+}
+
+async function createAssetLabProject() {
+  const name = (els.newProjectNameInput?.value || "").trim();
+  const description = (els.newProjectDescriptionInput?.value || "").trim();
+  if (!name) {
+    setStatus("请先填写项目分类名称。", "error");
+    return;
+  }
+  await assetLabFetch("/projects", {
+    method: "POST",
+    body: { name, description },
+  });
+  els.newProjectNameInput.value = "";
+  els.newProjectDescriptionInput.value = "";
+  await loadAssetLabProjects();
+  if (state.assetLab.projects.length) {
+    const created = state.assetLab.projects.find((project) => project.name === name);
+    state.assetLab.selectedProjectId = created?.id || state.assetLab.selectedProjectId;
+    renderProjectList();
+  }
+  setStatus("项目分类已创建。", "success");
+}
+
+async function loadAssetLibrary() {
+  const params = new URLSearchParams();
+  const projectId = els.libraryProjectFilter?.value || "";
+  const status = els.libraryStatusFilter?.value || "";
+  const prompt = els.libraryPromptFilter?.value || "";
+  if (projectId) params.set("project_id", projectId);
+  if (status) params.set("status", status);
+  if (prompt) params.set("prompt", prompt);
+  const suffix = params.toString() ? `?${params}` : "";
+  const payload = await assetLabFetch(`/assets${suffix}`);
+  state.assetLab.assets = payload.assets || [];
+  updateAssetLibraryCount();
+  renderAssetGrid();
+}
+
+function updateAssetLibraryCount() {
+  if (els.assetLibraryCount) {
+    els.assetLibraryCount.textContent = String(state.assetLab.assets.length || 0);
+  }
+  if (els.libraryResultSummary) {
+    const count = state.assetLab.assets.length || 0;
+    els.libraryResultSummary.textContent = count
+      ? `当前筛选到 ${count} 个资产，点击卡片查看大图和完整提示词。`
+      : "当前筛选没有匹配资产，可以放宽条件或生成候选图。";
+  }
+}
+
+function assetImageUrl(asset) {
+  if (asset.relative_thumbnail_path) {
+    return `/asset-lab-files/${asset.relative_thumbnail_path}`;
+  }
+  if (asset.relative_file_path) {
+    return `/asset-lab-files/${asset.relative_file_path}`;
+  }
+  return "";
+}
+
+function assetStatusMeta(status) {
+  const map = {
+    candidate: { label: "候选", tone: "candidate" },
+    selected: { label: "已选用", tone: "selected" },
+    rejected: { label: "已废弃", tone: "rejected" },
+    archived: { label: "已归档", tone: "archived" },
+  };
+  return map[status] || { label: status || "未知", tone: "default" };
+}
+
+function compactAssetPrompt(prompt) {
+  const normalized = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "没有记录提示词。";
+  }
+  return normalized.length > 132 ? `${normalized.slice(0, 132)}...` : normalized;
+}
+
+function formatAssetMeta(asset) {
+  const parts = [
+    `${Number(asset.width || 0)} x ${Number(asset.height || 0)}`,
+    providerMeta(asset.provider).label,
+  ];
+  if (asset.transparent_background) {
+    parts.push("透明");
+  } else if (asset.background_color) {
+    parts.push(asset.background_color);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+function renderAssetGrid() {
+  if (!els.assetGrid) {
+    return;
+  }
+  if (!state.assetLab.assets.length) {
+    els.assetGrid.innerHTML = `
+      <div class="library-empty-state">
+        <strong>没有匹配的资产</strong>
+        <span>可以放宽筛选条件，或先去“生图”页面生成一批候选图。</span>
+      </div>
+    `;
+    return;
+  }
+  els.assetGrid.innerHTML = state.assetLab.assets.map((asset) => {
+    const imageUrl = assetImageUrl(asset);
+    const status = assetStatusMeta(asset.status);
+    const title = `${asset.asset_type || "asset"} / ${asset.component_type || "asset"}`;
+    return `
+      <article class="asset-card" data-asset-id="${asset.id}" tabindex="0" role="button" aria-label="查看 ${escapeHtml(title)} 大图">
+        <div class="asset-card-preview">
+          ${imageUrl ? `<img src="${imageUrl}" alt="">` : '<div class="asset-card-empty"></div>'}
+          <span class="asset-status-pill is-${status.tone}">${escapeHtml(status.label)}</span>
+        </div>
+        <div class="asset-card-body">
+          <div class="asset-card-title-row">
+            <strong>${escapeHtml(title)}</strong>
+          </div>
+          <span class="asset-card-meta">${escapeHtml(formatAssetMeta(asset))}</span>
+          <p>${escapeHtml(compactAssetPrompt(asset.prompt))}</p>
+          <div class="asset-card-foot">
+            <span>${escapeHtml(formatDateLabel(asset.created_at) || "暂无日期")}</span>
+            <button class="asset-send-sprite-button" type="button" data-send-sprite-id="${asset.id}">去处理</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+  bindSendAssetToSpriteButtons(els.assetGrid, state.assetLab.assets);
+  els.assetGrid.querySelectorAll("[data-asset-id]").forEach((card) => {
+    const open = () => {
+      const asset = state.assetLab.assets.find((item) => String(item.id) === card.dataset.assetId);
+      if (asset) openAssetLightbox(asset);
+    };
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+}
+
+function openAssetLightbox(asset) {
+  const imageUrl = assetFullImageUrl(asset);
+  if (!imageUrl) {
+    return;
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "asset-lightbox";
+  overlay.innerHTML = `
+    <div class="asset-lightbox-dialog" role="dialog" aria-modal="true">
+      <button class="asset-lightbox-close" type="button" aria-label="关闭">×</button>
+      <img src="${imageUrl}" alt="">
+      <div class="asset-lightbox-meta">
+        <strong>${escapeHtml(asset.asset_type)} / ${escapeHtml(asset.component_type || "asset")}</strong>
+        <span>${asset.width} x ${asset.height} · ${escapeHtml(providerMeta(asset.provider).label)} · ${escapeHtml(asset.status)}</span>
+        <p>${escapeHtml(asset.prompt || "")}</p>
+      </div>
+    </div>
+  `;
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector(".asset-lightbox-close").addEventListener("click", close);
+  document.body.appendChild(overlay);
+}
+
+function renderAssetLabSettings() {
+  if (!state.assetLab.status) {
+    return;
+  }
+  if (els.settingsWorkspacePath) {
+    els.settingsWorkspacePath.textContent = state.assetLab.status.workspace_root || "";
+  }
+  renderSettingsConfiguredProviders();
+  const providerName = currentSettingsProviderName();
+  const provider = state.assetLab.status.providers[providerName];
+  const meta = providerMeta(providerName);
+  if (els.settingsProviderSelect) {
+    els.settingsProviderSelect.value = providerName;
+  }
+  if (els.settingsSelectedProviderName) {
+    els.settingsSelectedProviderName.textContent = meta.label;
+  }
+  if (els.settingsSelectedProviderEnv) {
+    els.settingsSelectedProviderEnv.textContent = meta.env;
+  }
+  if (els.settingsSelectedProviderMessage) {
+    els.settingsSelectedProviderMessage.textContent = provider?.message || "没有检测到该来源的配置。";
+  }
+  if (els.settingsSelectedProviderStatus) {
+    els.settingsSelectedProviderStatus.textContent = provider?.configured ? "已配置" : "未配置";
+    els.settingsSelectedProviderStatus.className =
+      `provider-state-badge ${provider?.configured ? "is-ready" : "is-missing"}`;
+    els.settingsSelectedProviderStatus.title = provider?.message || "";
+  }
+  if (els.saveProviderKeyButton) {
+    els.saveProviderKeyButton.textContent = `保存 ${meta.label} key`;
+  }
+  if (els.settingsProviderKeyInput) {
+    els.settingsProviderKeyInput.placeholder = `粘贴 ${meta.label} API key`;
+  }
+  if (els.settingsProviderHelp) {
+    if (providerName === "toioto") {
+      els.settingsProviderHelp.innerHTML = `
+        <div>
+          <strong>获取 ToioTo API key</strong>
+          <p>还没有 key 时，可以打开注册链接获取。image2 生图：0.015 元/张。</p>
+        </div>
+        <a href="https://sub2api.toioto.org/register?aff=EYMPMLL9BLS5" target="_blank" rel="noopener">打开注册链接</a>
+      `;
+    } else {
+      els.settingsProviderHelp.innerHTML = `
+        <div>
+          <strong>获取 OpenAI API key</strong>
+          <p>请使用自己的 OpenAI Platform key。保存后只写入本工具 .env。</p>
+        </div>
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">打开 key 页面</a>
+      `;
+    }
+  }
+}
+
+function renderSettingsConfiguredProviders() {
+  if (!els.settingsConfiguredProviders || !state.assetLab.status?.providers) {
+    return;
+  }
+  const providerOrder = ["toioto", "openai"];
+  const providers = providerOrder
+    .filter((name) => state.assetLab.status.providers[name])
+    .map((name) => [name, state.assetLab.status.providers[name]]);
+  els.settingsConfiguredProviders.innerHTML = providers
+    .map(([name, info]) => {
+      const meta = providerMeta(name);
+      const configured = Boolean(info.configured);
+      return `
+        <article class="configured-provider ${configured ? "is-ready" : "is-missing"}">
+          <div>
+            <strong>${escapeHtml(meta.label)}</strong>
+            <span>${escapeHtml(meta.env)}</span>
+          </div>
+          <b>${configured ? "已配置" : "未配置"}</b>
+          <p>${escapeHtml(info.message || (configured ? "可以提交生图任务。" : "保存 API key 后可用。"))}</p>
+        </article>
+      `;
+    })
+    .join("");
 }
 
 function bindTimePair(key, rangeEl, numberEl, decreaseButton, increaseButton) {
@@ -2345,7 +3314,7 @@ function renderExportResult() {
   els.exportResult.innerHTML = `
     <div class="result-summary">
       ${summaryCard("\u5bfc\u51fa\u5e27\u6570", `${state.exportResult.frame_count} \u5e27`)}
-      ${summaryCard("\u5bfc\u51fa\u5185\u5bb9", "PNG \u5e27 / \u900f\u660e MOV / sprite sheet / zip / manifest")}
+      ${summaryCard("\u5bfc\u51fa\u5185\u5bb9", "PNG \u5e27 / \u900f\u660e MOV / \u5e8f\u5217\u5e27\u5408\u56fe / zip / manifest")}
     </div>
     <div class="link-list">
       <button id="openExportDirButton" class="ghost-button" type="button">\u6253\u5f00\u5bfc\u51fa\u76ee\u5f55</button>
@@ -2457,13 +3426,13 @@ async function apiJson(url, options = {}) {
   try {
     response = await fetch(url, fetchOptions);
   } catch (error) {
-    throw new Error(`\u8BF7\u6C42\u5931\u8D25\uFF1A${error.message || String(error)}\u3002\u8BF7\u786E\u8BA4 Sprite Video Lab \u540E\u7AEF\u6B63\u5728\u8FD0\u884C\uFF0C\u5E76\u5DF2\u91CD\u542F\u5230\u6700\u65B0\u7248\u672C\u3002`);
+    throw new Error(`请求失败：${error.message || String(error)}。请确认动作帧处理后端正在运行，并已重启到最新版本。`);
   }
 
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     const detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 180);
-    throw new Error(`\u63A5\u53E3\u672A\u8FD4\u56DE JSON\uFF08HTTP ${response.status}\uFF09\u3002\u8BF7\u91CD\u542F Sprite Video Lab \u540E\u7AEF\u540E\u518D\u8BD5\u3002${detail ? ` ${detail}` : ""}`);
+    throw new Error(`接口未返回 JSON（HTTP ${response.status}）。请重启动作帧处理后端后再试。${detail ? ` ${detail}` : ""}`);
   }
 
   const data = await response.json();

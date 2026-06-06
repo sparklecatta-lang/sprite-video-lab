@@ -18,13 +18,21 @@ from fractions import Fraction
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from PIL import Image, ImageChops, ImageFilter
+
+from asset_lab.config import AssetLabConfig, load_config
+from asset_lab.db import connect_db, migrate
+from asset_lab.images import save_candidate_image
+from asset_lab.providers import get_provider, list_providers
+from asset_lab.providers.base import GenerationRequest
+from asset_lab.repository import AssetRepository
 
 
 ROOT_DIR = Path(__file__).resolve().parent
 APP_DIR = ROOT_DIR / "app"
+TOOL_ENV_PATH = ROOT_DIR / ".env"
 WORK_DIR = ROOT_DIR / "work"
 UPLOADS_DIR = WORK_DIR / "uploads"
 JOBS_DIR = WORK_DIR / "jobs"
@@ -605,6 +613,60 @@ def ffprobe_json(path: Path) -> dict:
     return json.loads(output)
 
 
+def ffmpeg_probe_text(path: Path) -> str:
+    ffmpeg = resolve_ffmpeg_binary("ffmpeg")
+    completed = subprocess.run(
+        [ffmpeg, "-i", str(path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    output = "\n".join(part for part in (completed.stderr, completed.stdout) if part)
+    if not output.strip():
+        raise RuntimeError(f"ffmpeg could not read media info: {path}")
+    return output
+
+
+def parse_duration_text(raw: str) -> float:
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+    if not match:
+        return 0.0
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    seconds = float(match.group(3))
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def parse_ffmpeg_video_info(raw: str) -> dict:
+    video_line = next((line for line in raw.splitlines() if " Video: " in line), "")
+    width = 0
+    height = 0
+    fps = 0.0
+    codec = ""
+    codec_match = re.search(r"Video:\s*([^,\s]+)", video_line)
+    size_match = re.search(r"(?<![A-Za-z0-9])(\d{2,5})x(\d{2,5})(?![A-Za-z0-9])", video_line)
+    fps_match = re.search(r"(\d+(?:\.\d+)?)\s*fps", video_line)
+    if codec_match:
+        codec = codec_match.group(1)
+    if size_match:
+        width = safe_int(size_match.group(1), 0)
+        height = safe_int(size_match.group(2), 0)
+    if fps_match:
+        fps = safe_float(fps_match.group(1), 0.0)
+    return {
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "duration": parse_duration_text(raw),
+        "codec": codec,
+    }
+
+
+def video_info_from_ffmpeg(path: Path) -> dict:
+    return parse_ffmpeg_video_info(ffmpeg_probe_text(path))
+
+
 def parse_frame_rate(raw: str) -> float:
     if not raw or raw == "0/0":
         return 0.0
@@ -615,20 +677,23 @@ def parse_frame_rate(raw: str) -> float:
 
 
 def video_info(path: Path) -> dict:
-    payload = ffprobe_json(path)
-    streams = payload.get("streams") or []
-    video_stream = next((item for item in streams if item.get("codec_type") == "video"), {})
-    width = safe_int(video_stream.get("width"), 0)
-    height = safe_int(video_stream.get("height"), 0)
-    fps = parse_frame_rate(str(video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate") or "0/0"))
-    duration = safe_float((payload.get("format") or {}).get("duration"), 0.0)
-    return {
-        "width": width,
-        "height": height,
-        "fps": fps,
-        "duration": duration,
-        "codec": str(video_stream.get("codec_name") or ""),
-    }
+    try:
+        payload = ffprobe_json(path)
+        streams = payload.get("streams") or []
+        video_stream = next((item for item in streams if item.get("codec_type") == "video"), {})
+        width = safe_int(video_stream.get("width"), 0)
+        height = safe_int(video_stream.get("height"), 0)
+        fps = parse_frame_rate(str(video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate") or "0/0"))
+        duration = safe_float((payload.get("format") or {}).get("duration"), 0.0)
+        return {
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "duration": duration,
+            "codec": str(video_stream.get("codec_name") or ""),
+        }
+    except Exception:
+        return video_info_from_ffmpeg(path)
 
 
 def image_info(path: Path) -> dict:
@@ -2395,6 +2460,307 @@ def export_job(job_id: str, selected_indices: list[int], sheet_columns: int, vid
     }
 
 
+def asset_lab_repo() -> tuple[AssetLabConfig, object, AssetRepository]:
+    config = load_config()
+    config.ensure()
+    conn = connect_db(config)
+    migrate(conn)
+    return config, conn, AssetRepository(conn)
+
+
+def asset_lab_status_payload() -> dict:
+    config = load_config()
+    config.ensure()
+    providers = {}
+    for provider_name in list_providers():
+        provider = get_provider(provider_name)
+        providers[provider_name] = {
+            "configured": provider.is_configured(),
+            "message": provider.configuration_message(),
+        }
+    return {
+        "ok": True,
+        "workspace_root": str(config.workspace_root),
+        "providers": providers,
+    }
+
+
+def read_dotenv_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def set_dotenv_value(path: Path, key: str, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = read_dotenv_lines(path)
+    output: list[str] = []
+    written = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            current_key = stripped.split("=", 1)[0].strip()
+            if current_key == key:
+                if not written:
+                    output.append(f"{key}={value}")
+                    written = True
+                continue
+        output.append(line)
+    if not written:
+        output.append(f"{key}={value}")
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+
+def save_asset_lab_provider_key_payload(payload: dict) -> dict:
+    provider_name = str(payload.get("provider") or "").strip().lower()
+    api_key = str(payload.get("api_key") or "").strip()
+    key_map = {
+        "toioto": "TOIOTO_API_KEY",
+        "openai": "OPENAI_API_KEY",
+    }
+    if provider_name not in key_map:
+        raise ValueError("不支持的生图来源")
+    if not api_key:
+        raise ValueError("请填写 API key")
+    env_key = key_map[provider_name]
+    set_dotenv_value(TOOL_ENV_PATH, env_key, api_key)
+    os.environ[env_key] = api_key
+    return {
+        "ok": True,
+        "provider": provider_name,
+        "message": "API key 已保存到工具 .env。",
+    }
+
+
+def create_asset_lab_project_payload(payload: dict) -> dict:
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise ValueError("project name is required")
+    description = str(payload.get("description", "")).strip()
+    _config, conn, repo = asset_lab_repo()
+    try:
+        project = repo.create_project(name, description)
+    finally:
+        conn.close()
+    return {"ok": True, "project": project}
+
+
+def list_asset_lab_projects_payload() -> dict:
+    _config, conn, repo = asset_lab_repo()
+    try:
+        return {"ok": True, "projects": repo.list_projects()}
+    finally:
+        conn.close()
+
+
+def list_asset_lab_assets_payload(query: str) -> dict:
+    params = parse_qs(query)
+    filters = {
+        "project_id": safe_int(params["project_id"][0], 0) if params.get("project_id") else None,
+        "status": params.get("status", [""])[0],
+        "asset_type": params.get("asset_type", [""])[0],
+        "component_type": params.get("component_type", [""])[0],
+        "provider": params.get("provider", [""])[0],
+        "prompt": params.get("prompt", [""])[0],
+    }
+    if filters["project_id"] == 0:
+        filters["project_id"] = None
+    _config, conn, repo = asset_lab_repo()
+    try:
+        return {"ok": True, "assets": repo.search_assets(filters)}
+    finally:
+        conn.close()
+
+
+def normalize_asset_lab_size(value, default: int = 1024) -> int:
+    size = safe_int(value, default)
+    return max(64, min(4096, size))
+
+
+def normalize_asset_lab_count(value) -> int:
+    count = safe_int(value, 1)
+    return max(1, min(4, count))
+
+
+def save_asset_lab_reference_file(file_item, output_dir: Path, index: int) -> Path:
+    filename = clean_filename(file_item.filename or f"reference-{index}.png")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        suffix = content_type_extension(getattr(file_item, "type", "")) or ".png"
+    if suffix not in IMAGE_EXTENSIONS:
+        raise ValueError("参考图只支持 png / jpg / jpeg / webp / bmp")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / f"reference_{index:02d}{suffix}"
+    with target.open("wb") as output:
+        shutil.copyfileobj(file_item.file, output)
+    return target
+
+
+def create_asset_lab_generation_payload(
+    payload: dict,
+    reference_image_paths: list[Path] | None = None,
+    mask_image_path: Path | None = None,
+) -> dict:
+    provider_name = str(payload.get("provider") or "").strip().lower()
+    if not provider_name:
+        raise ValueError("请选择生图来源")
+    provider = get_provider(provider_name)
+    if not provider.is_configured():
+        raise ValueError(provider.configuration_message())
+
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("请填写提示词")
+
+    project_id = safe_int(payload.get("project_id"), 0)
+    project_id_value = project_id if project_id > 0 else None
+    asset_type = str(payload.get("asset_type") or "asset").strip() or "asset"
+    component_type = str(payload.get("component_type") or "").strip()
+    negative_prompt = str(payload.get("negative_prompt") or "").strip()
+    style_text = str(payload.get("style_text") or "").strip()
+    width = normalize_asset_lab_size(payload.get("width"), 1024)
+    height = normalize_asset_lab_size(payload.get("height"), 1024)
+    count = normalize_asset_lab_count(payload.get("count"))
+    quality = str(payload.get("quality") or "low").strip() or "low"
+    transparent_background = bool(payload.get("transparent_background"))
+    request_params = {
+        "quality": quality,
+        "width": width,
+        "height": height,
+        "count": count,
+        "transparent_background": transparent_background,
+        "mode": "reference" if reference_image_paths else "text",
+        "reference_image_count": len(reference_image_paths or []),
+        "has_mask": mask_image_path is not None,
+    }
+    request = GenerationRequest(
+        project_id=project_id_value,
+        asset_type=asset_type,
+        component_type=component_type,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        style_text=style_text,
+        width=width,
+        height=height,
+        count=count,
+        transparent_background=transparent_background,
+        reference_image_paths=reference_image_paths or [],
+        mask_image_path=mask_image_path,
+        params={"quality": quality},
+    )
+
+    config, conn, repo = asset_lab_repo()
+    job = repo.create_generation_job(
+        project_id=project_id_value,
+        provider=provider_name,
+        asset_type=asset_type,
+        component_type=component_type,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        style_text_snapshot=style_text,
+        request_params=request_params,
+    )
+    tmp_dir = config.tmp_dir / f"generation-{job['id']}"
+    assets = []
+    try:
+        repo.update_generation_job_status(job["id"], "running")
+        result = provider.generate(request, tmp_dir)
+        for index, image_path in enumerate(result.image_paths):
+            saved = save_candidate_image(config, image_path, provider_name, asset_type)
+            seed = result.seeds[index] if index < len(result.seeds) else ""
+            asset = repo.create_asset(
+                project_id=project_id_value,
+                source_job_id=job["id"],
+                asset_type=asset_type,
+                component_type=component_type,
+                provider=provider_name,
+                file_path=str(saved.file_path),
+                relative_file_path=saved.relative_file_path,
+                thumbnail_path=str(saved.thumbnail_path),
+                relative_thumbnail_path=saved.relative_thumbnail_path,
+                width=saved.info.width,
+                height=saved.info.height,
+                has_alpha=saved.info.has_alpha,
+                is_transparent_bg=saved.info.is_transparent_bg,
+                prompt=prompt,
+                background_color=saved.info.background_color,
+                negative_prompt=negative_prompt,
+                style_text_snapshot=style_text,
+                provider_params=result.provider_params,
+                seed=seed,
+                format=saved.info.format,
+            )
+            assets.append(asset)
+        job = repo.update_generation_job_status(job["id"], "completed")
+    except Exception as exc:
+        repo.update_generation_job_status(job["id"], "failed", str(exc))
+        raise
+    finally:
+        conn.close()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return {"ok": True, "job": job, "assets": assets}
+
+
+def create_asset_lab_generation_from_form(form: cgi.FieldStorage) -> dict:
+    payload = {
+        "provider": form.getfirst("provider", ""),
+        "project_id": form.getfirst("project_id", ""),
+        "asset_type": form.getfirst("asset_type", ""),
+        "component_type": form.getfirst("component_type", ""),
+        "style_text": form.getfirst("style_text", ""),
+        "prompt": form.getfirst("prompt", ""),
+        "negative_prompt": form.getfirst("negative_prompt", ""),
+        "width": form.getfirst("width", ""),
+        "height": form.getfirst("height", ""),
+        "quality": form.getfirst("quality", ""),
+        "count": form.getfirst("count", ""),
+        "transparent_background": form.getfirst("transparent_background", "") in {"1", "true", "True", "on"},
+    }
+    reference_dir = load_config().tmp_dir / f"references-{timestamped_id()}"
+    reference_paths: list[Path] = []
+    mask_path: Path | None = None
+    try:
+        for index, file_item in enumerate(field_storage_items(form, "reference_images"), start=1):
+            if getattr(file_item, "file", None):
+                reference_paths.append(save_asset_lab_reference_file(file_item, reference_dir, index))
+        mask_items = field_storage_items(form, "mask_image")
+        if mask_items and getattr(mask_items[0], "file", None) and mask_items[0].filename:
+            mask_path = save_asset_lab_reference_file(mask_items[0], reference_dir, 0)
+        return create_asset_lab_generation_payload(payload, reference_paths, mask_path)
+    finally:
+        shutil.rmtree(reference_dir, ignore_errors=True)
+
+
+def send_asset_lab_asset_to_sprite_payload(asset_id: int) -> dict:
+    if asset_id <= 0:
+        raise ValueError("asset id is required")
+
+    config, conn, repo = asset_lab_repo()
+    try:
+        asset = repo.get_asset(asset_id)
+    except KeyError as exc:
+        raise FileNotFoundError(f"asset not found: {asset_id}") from exc
+    finally:
+        conn.close()
+
+    source_path = repair_mojibake_path(Path(str(asset.get("file_path") or ""))).expanduser().resolve()
+    if not is_within_root(source_path, config.workspace_root):
+        raise ValueError("asset file path is outside workspace")
+
+    upload = register_video_from_path(source_path)
+    return {"ok": True, "upload": upload, "asset": asset}
+
+
+def resolve_asset_lab_file(relative_path: str) -> Path:
+    config = load_config()
+    root = config.workspace_root.resolve()
+    target = (root / relative_path).resolve()
+    if not is_within_root(target, root):
+        raise ValueError("asset file path is outside workspace")
+    return target
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "SpriteVideoLab/0.1"
 
@@ -2423,6 +2789,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 }
             )
             return
+        if parsed.path == "/api/asset-lab/status":
+            self.send_json(asset_lab_status_payload())
+            return
+        if parsed.path == "/api/asset-lab/projects":
+            self.send_json(list_asset_lab_projects_payload())
+            return
+        if parsed.path == "/api/asset-lab/assets":
+            self.send_json(list_asset_lab_assets_payload(parsed.query))
+            return
         if parsed.path == "/":
             self.serve_app_file(APP_DIR / "index.html", content_type="text/html; charset=utf-8")
             return
@@ -2438,11 +2813,49 @@ class AppHandler(BaseHTTPRequestHandler):
             relative = parsed.path.removeprefix("/work/")
             self.serve_work_file((WORK_DIR / relative).resolve())
             return
+        if parsed.path.startswith("/asset-lab-files/"):
+            relative = unquote(parsed.path.removeprefix("/asset-lab-files/"))
+            try:
+                self.serve_asset_lab_file(resolve_asset_lab_file(relative))
+            except ValueError:
+                self.send_error(HTTPStatus.FORBIDDEN)
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/asset-lab/projects":
+                payload = self.read_json_body()
+                self.send_json(create_asset_lab_project_payload(payload), status=HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/asset-lab/provider-key":
+                payload = self.read_json_body()
+                self.send_json(save_asset_lab_provider_key_payload(payload))
+                return
+            if parsed.path == "/api/asset-lab/generate":
+                content_type = self.headers.get("Content-Type", "")
+                if content_type.lower().startswith("multipart/form-data"):
+                    form = cgi.FieldStorage(
+                        fp=self.rfile,
+                        headers=self.headers,
+                        environ={
+                            "REQUEST_METHOD": "POST",
+                            "CONTENT_TYPE": content_type,
+                            "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+                        },
+                    )
+                    result = create_asset_lab_generation_from_form(form)
+                else:
+                    payload = self.read_json_body()
+                    result = create_asset_lab_generation_payload(payload)
+                self.send_json(result, status=HTTPStatus.CREATED)
+                return
+            asset_sprite_match = re.fullmatch(r"/api/asset-lab/assets/(\d+)/send-to-sprite", parsed.path)
+            if asset_sprite_match:
+                result = send_asset_lab_asset_to_sprite_payload(int(asset_sprite_match.group(1)))
+                self.send_json(result)
+                return
             if parsed.path == "/api/import-path":
                 payload = self.read_json_body()
                 raw_path = str(payload.get("path") or "").strip().strip("\"'")
@@ -2614,6 +3027,13 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def serve_work_file(self, path: Path, content_type: str | None = None, allow_range: bool = False) -> None:
         if not is_within_root(path, WORK_DIR):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        self.serve_file(path, content_type=content_type, allow_range=allow_range)
+
+    def serve_asset_lab_file(self, path: Path, content_type: str | None = None, allow_range: bool = False) -> None:
+        config = load_config()
+        if not is_within_root(path, config.workspace_root):
             self.send_error(HTTPStatus.FORBIDDEN)
             return
         self.serve_file(path, content_type=content_type, allow_range=allow_range)
