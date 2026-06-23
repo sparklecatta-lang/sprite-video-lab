@@ -1,0 +1,17 @@
+.git
+.venv
+work/
+tests/
+docs/
+*.bat
+*.ps1
+*.pyc
+__pycache__
+LICENSE
+build_portable_bundle.ps1
+setup_ai_runtime.bat
+CHANGELOG.md
+AGENT_INSTALL.md
+USAGE.md
+USAGE.zh-CN.md
+AI_MATTING.md
