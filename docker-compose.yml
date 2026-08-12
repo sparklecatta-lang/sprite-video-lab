@@ -1,0 +1,29 @@
+# Sprite Video Lab 0.2.0 – Docker Compose deployment (CUDA GPU)
+services:
+  sprite-video-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sprite-video-lab
+    ports:
+      - "127.0.0.1:8894:8894"
+    environment:
+      - SPRITE_VIDEO_LAB_HOST=0.0.0.0
+      - SPRITE_VIDEO_LAB_PORT=8894
+      - SPRITE_VIDEO_LAB_FFMPEG_DIR=/usr/bin
+      - SPRITE_VIDEO_LAB_AI_MODEL_CACHE=/app/ai-cache
+    volumes:
+      - sprite-video-lab-work:/app/work
+      - sprite-video-lab-ai-cache:/app/ai-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  sprite-video-lab-work:
+  sprite-video-lab-ai-cache:
